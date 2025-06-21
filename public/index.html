@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>sointu WASM example</title>
+  </head>
+
+  <body>
+
+    <canvas id="oscilloscope" width="800" height="200"></canvas>
+
+    
+<script type="module">
+  const button = document.createElement("button");
+  button.innerHTML = "start";
+  document.body.appendChild(button);
+
+  const canvas = document.getElementById("oscilloscope");
+  const canvasCtx = canvas.getContext("2d");
+
+  button.onclick = () => {
+    document.body.removeChild(button);
+
+    console.log("Loading song");
+    fetch("songs/song1final.wasm")
+      .then((response) => response.arrayBuffer())
+      .then((bytes) => WebAssembly.instantiate(bytes, { m: Math }))
+      .then(({ instance }) => {
+        console.log("Creating audio context");
+        const context = new AudioContext({ sampleRate: 44100 });
+
+        let frames = instance.exports.t.value
+          ? instance.exports.l.value / 4
+          : instance.exports.l.value / 8;
+
+        let wasmBuffer = new Float32Array(
+          instance.exports.m.buffer,
+          instance.exports.s.value,
+          frames * 2
+        );
+
+        const buffer = context.createBuffer(2, frames, context.sampleRate);
+        for (let channel = 0; channel < 2; channel++) {
+          const buffering = buffer.getChannelData(channel);
+          for (let i = 0; i < frames; i++) {
+            buffering[i] = wasmBuffer[i * 2 + channel];
+          }
+        }
+
+        // 🔊 Audio source
+        const src = context.createBufferSource();
+        src.buffer = buffer;
+
+        // 📊 Create analyser node
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        const bufferLength = analyser.fftSize;
+        const dataArray = new Uint8Array(bufferLength);
+
+        // 🔗 Connect nodes: src → analyser → speakers
+        src.connect(analyser);
+        analyser.connect(context.destination);
+
+        // 🖼️ Draw waveform
+        function draw() {
+          requestAnimationFrame(draw);
+
+          analyser.getByteTimeDomainData(dataArray);
+
+          canvasCtx.fillStyle = "black";
+          canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+          canvasCtx.lineWidth = 2;
+          canvasCtx.strokeStyle = "lime";
+          canvasCtx.beginPath();
+
+          const sliceWidth = canvas.width / bufferLength;
+          let x = 0;
+
+          for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = v * canvas.height / 2;
+
+            if (i === 0) {
+              canvasCtx.moveTo(x, y);
+            } else {
+              canvasCtx.lineTo(x, y);
+            }
+
+            x += sliceWidth;
+          }
+
+          canvasCtx.lineTo(canvas.width, canvas.height / 2);
+          canvasCtx.stroke();
+        }
+
+        draw();
+
+        console.log("Starting song");
+        src.start();
+      });
+  };
+</script>
+  </body>
+</html>
